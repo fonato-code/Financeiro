@@ -1,0 +1,953 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Análise de investimento</title>
+  <link rel="stylesheet" href="src/css/bootsrtap-v5.3.8.css" />
+  <link rel="stylesheet" href="src/fontawesome5pro/fontawesome-pro-5.8.2.css" />
+  <style>
+    :root {
+      --app-bg: #0f1419;
+      --app-surface: #1a2332;
+      --app-border: #2d3a4f;
+      --app-accent: #3d8bfd;
+      --app-positive: #2ecc71;
+      --app-negative: #e74c3c;
+      --app-muted: #8b9cb3;
+    }
+    body {
+      background: var(--app-bg);
+      color: #e8eef5;
+      min-height: 100vh;
+    }
+    .app-shell {
+      max-width: 1280px;
+    }
+    .card {
+      background: var(--app-surface);
+      border-color: var(--app-border);
+      color: inherit;
+    }
+    .card-header {
+      background: rgba(61, 139, 253, 0.08);
+      border-bottom-color: var(--app-border);
+      font-weight: 600;
+    }
+    .form-control, .form-select {
+      background: #121a26;
+      border-color: var(--app-border);
+      color: #e8eef5;
+    }
+    .form-control:focus, .form-select:focus {
+      background: #121a26;
+      border-color: var(--app-accent);
+      color: #e8eef5;
+      box-shadow: 0 0 0 0.2rem rgba(61, 139, 253, 0.25);
+    }
+    .text-muted { color: var(--app-muted) !important; }
+    .table {
+      --bs-table-bg: transparent;
+      --bs-table-color: #e8eef5;
+      border-color: var(--app-border);
+    }
+    .table thead th {
+      border-bottom-color: var(--app-border);
+      color: var(--app-muted);
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .amount-in { color: var(--app-positive); font-weight: 600; }
+    .amount-out { color: var(--app-negative); font-weight: 600; }
+    /* Extrato: células da tabela sobrescrevem cor — pills com fundo para entrada/saída */
+    .ledger-badge-move-in {
+      font-size: 0.75rem;
+      font-weight: 600;
+      vertical-align: middle;
+      color: #dff5e8 !important;
+      background: rgba(46, 204, 113, 0.38) !important;
+      border: 1px solid rgba(46, 204, 113, 0.65);
+      white-space: nowrap;
+    }
+    .ledger-badge-move-out {
+      font-size: 0.75rem;
+      font-weight: 600;
+      vertical-align: middle;
+      color: #fde8e6 !important;
+      background: rgba(231, 76, 60, 0.32) !important;
+      border: 1px solid rgba(231, 76, 60, 0.55);
+      white-space: nowrap;
+    }
+    .ledger-badge-move-in .ledger-move-amt,
+    .ledger-badge-move-out .ledger-move-amt {
+      font-variant-numeric: tabular-nums;
+    }
+    .stat-tile {
+      border-radius: 0.5rem;
+      padding: 1rem 1.25rem;
+      background: linear-gradient(145deg, rgba(61, 139, 253, 0.12), rgba(26, 35, 50, 0.9));
+      border: 1px solid var(--app-border);
+    }
+    .stat-tile .label { font-size: 0.75rem; color: var(--app-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    .stat-tile .value { font-size: 1.35rem; font-weight: 700; }
+    .ledger-table-wrap { font-size: 0.875rem; }
+    tr.ledger-row-projected td {
+      border-color: rgba(61, 139, 253, 0.2);
+    }
+    tr.ledger-row-projected {
+      background: rgba(30, 42, 62, 0.55);
+    }
+    .ledger-badge-proj {
+      font-size: 0.65rem;
+      font-weight: 600;
+      vertical-align: middle;
+      color: #9ecbff !important;
+      border: 1px solid rgba(61, 139, 253, 0.45);
+    }
+    .ledger-badge-yield-yes {
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: #dff5e8 !important;
+      background: rgba(46, 204, 113, 0.35) !important;
+      border: 1px solid rgba(46, 204, 113, 0.55);
+    }
+    .ledger-badge-yield-no {
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: #b8c5d6 !important;
+      background: rgba(139, 156, 179, 0.2) !important;
+      border: 1px solid rgba(139, 156, 179, 0.35);
+    }
+    .ledger-badge-holiday {
+      font-size: 0.65rem;
+      font-weight: 600;
+      color: #ffe8cc !important;
+      background: rgba(230, 126, 34, 0.35) !important;
+      border: 1px solid rgba(230, 126, 34, 0.55);
+      white-space: normal;
+      max-width: 14rem;
+      text-align: left;
+      line-height: 1.25;
+    }
+    .modal-holidays .modal-content {
+      background: var(--app-surface);
+      color: #e8eef5;
+      border-color: var(--app-border);
+    }
+    .modal-holidays .modal-header,
+    .modal-holidays .modal-footer {
+      border-color: var(--app-border);
+    }
+    .modal-holidays .btn-close {
+      filter: invert(1);
+    }
+    .ledger-move-click {
+      cursor: pointer;
+    }
+    .ledger-move-click:hover {
+      filter: brightness(1.12);
+    }
+    .ledger-week-stats-list {
+      max-height: 14rem;
+      overflow-y: auto;
+    }
+    .modal-holidays .tax-iof-pct-cell,
+    .modal-holidays .tax-ir-pct-cell {
+      color: #f5c88a;
+      font-size: 0.875rem;
+      font-weight: 600;
+    }
+    .modal-holidays .tax-iof-amt-cell,
+    .modal-holidays .tax-ir-amt-cell {
+      color: #f0ad4e;
+    }
+    td.ledger-val-projected {
+      background: rgba(46, 204, 113, 0.18) !important;
+      font-style: italic;
+      color: #d4f5e3 !important;
+    }
+    td.ledger-diff-realized {
+      background: rgba(186, 104, 200, 0.12) !important;
+    }
+    td.ledger-diff-projected {
+      background: rgba(186, 104, 200, 0.26) !important;
+      font-style: italic;
+      color: #f3e8ff !important;
+    }
+  </style>
+</head>
+<body>
+  <div id="app" class="py-4">
+    <div class="container app-shell">
+      <header class="mb-4">
+        <h1 class="h3 mb-1">
+          <i class="fas fa-chart-line me-2 text-primary"></i>
+          Análise de investimento
+        </h1>
+        <p class="text-muted mb-0">
+          Modelo para <strong>Cofrinho Itaú</strong> (CDB): projeção com CDI, entradas/saídas, IR regressivo e IOF nos primeiros 30 dias.
+          <a class="link-primary" href="https://www.itau.com.br/cofrinhos" target="_blank" rel="noopener">Site Itaú</a>
+        </p>
+      </header>
+
+      <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+        <button
+          type="button"
+          class="btn btn-sm btn-outline-secondary border-secondary"
+          :title="summarySectionExpanded ? 'Recolher resumo' : 'Expandir resumo'"
+          :aria-expanded="summarySectionExpanded"
+          aria-controls="summarySectionBody"
+          @click="summarySectionExpanded = !summarySectionExpanded"
+        >
+          <i class="fas" :class="summarySectionExpanded ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+        </button>
+        <span class="small fw-semibold text-muted text-uppercase" style="letter-spacing: 0.05em">Resumo</span>
+      </div>
+      <div id="summarySectionBody" v-show="summarySectionExpanded">
+      <div class="row g-3 mb-4">
+        <div class="col-md-4">
+          <div class="stat-tile h-100">
+            <div class="label">{{ cofrinhoTaxes ? 'Saldo líquido projetado' : 'Saldo final projetado' }}</div>
+            <div class="value text-white">{{ formatMoney(simulation.finalBalance) }}</div>
+            <div class="small text-muted mt-1">
+              Até {{ formatDate(horizonDate) }}
+              <span v-if="cofrinhoTaxes"> · já descontados IOF (se aplicável) e IR sobre o rendimento</span>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="stat-tile h-100">
+            <div class="label">{{ cofrinhoTaxes ? 'Ganho líquido (vs. só aportes)' : 'Rendimento dos juros' }}</div>
+            <div class="value" :class="simulation.interestGain >= 0 ? 'text-success' : 'text-danger'">
+              {{ formatMoney(simulation.interestGain) }}
+            </div>
+            <div class="small text-muted mt-1">
+              {{ cofrinhoTaxes ? 'Patrimônio líquido menos capital aportado/resgatado (referência)' : 'Vs. mesmos fluxos sem rentabilidade' }}
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="stat-tile h-100">
+            <div class="label">Patrimônio sem juros (referência)</div>
+            <div class="value text-white">{{ formatMoney(simulation.balanceZeroRate) }}</div>
+            <div class="small text-muted mt-1">Saldo acumulado com taxa 0%</div>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="cofrinhoTaxes" class="row g-3 mb-4">
+        <div class="col-md-4">
+          <div class="stat-tile h-100 border border-secondary border-opacity-25">
+            <div class="label">Rendimento bruto (acumulado)</div>
+            <div class="value text-white">{{ formatMoney(simulation.totalGrossYield) }}</div>
+            <div class="small text-muted mt-1">Antes de IOF e IR (como no detalhe “bruto” do app)</div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="stat-tile h-100 border border-secondary border-opacity-25">
+            <div class="label">IOF sobre rendimento</div>
+            <div class="value text-warning">{{ formatMoney(simulation.totalIof) }}</div>
+            <div class="small text-muted mt-1">Tabela regressiva · isento após 30 dias corridos por aporte</div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="stat-tile h-100 border border-secondary border-opacity-25">
+            <div class="label">IR sobre rendimento</div>
+            <div class="value text-warning">{{ formatMoney(simulation.totalIr) }}</div>
+            <div class="small text-muted mt-1">Alíquota regressiva conforme tempo de cada aporte</div>
+          </div>
+        </div>
+      </div>
+
+      <p class="small text-muted mb-3 text-center">
+        Período simulado: {{ formatDate(periodStart) }} → {{ formatDate(horizonDate) }}
+        <span v-if="sortedFlows.length && periodStart !== simulationStart" class="ms-1">(início antecipado pela data da primeira movimentação)</span>
+      </p>
+      </div>
+
+      <div class="row g-3 mb-4">
+        <div class="col-lg-6">
+          <div class="card shadow-sm">
+            <div class="card-header d-flex flex-wrap align-items-center gap-2">
+              <button
+                type="button"
+                class="btn btn-sm btn-outline-secondary border-secondary"
+                :title="paramsSectionExpanded ? 'Recolher seção' : 'Expandir seção'"
+                :aria-expanded="paramsSectionExpanded"
+                aria-controls="paramsSectionBody"
+                @click="paramsSectionExpanded = !paramsSectionExpanded"
+              >
+                <i class="fas" :class="paramsSectionExpanded ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+              </button>
+              <span><i class="fas fa-sliders-h me-2"></i>Parâmetros</span>
+            </div>
+            <div id="paramsSectionBody" v-show="paramsSectionExpanded" class="card-body">
+              <div class="row g-3">
+                <div class="col-12">
+                  <div class="form-check form-switch mb-2">
+                    <input id="cofrinhoTax" v-model="cofrinhoTaxes" class="form-check-input" type="checkbox" role="switch" />
+                    <label class="form-check-label" for="cofrinhoTax">
+                      Modelo <strong>Cofrinho</strong> (IR regressivo + IOF até 30 dias · rendimento em dias úteis, base 252)
+                    </label>
+                  </div>
+                  <p v-if="cofrinhoTaxes" class="small text-muted mb-3">
+                    IR: até 180 dias 22,5% · 181–360 dias 20% · 361–720 dias 17,5% · acima de 720 dias 15% (sobre o rendimento).
+                    IOF: tabela oficial regressiva nos primeiros 30 dias corridos por aporte; IR calculado sobre o rendimento após IOF.
+                    Feriados não são descontados do calendário (aproximação).
+                  </p>
+                </div>
+                <div class="col-12">
+                  <div class="form-check form-switch mb-2">
+                    <input id="cdiSync" v-model="cdiSynced" class="form-check-input" type="checkbox" role="switch" />
+                    <label class="form-check-label" for="cdiSync">
+                      Usar <strong>CDI</strong> oficial (BCB, série SGS 4389)
+                    </label>
+                  </div>
+                  <p class="small text-muted mb-2">
+                    Com CDI oficial ativo, a taxa <strong>varia ao longo do tempo</strong>: o app busca a série SGS 4389 do BCB entre a data inicial do período e o horizonte da simulação e aplica, em cada dia de postagem, o último CDI publicado até aquela data (carry-forward).
+                    <a class="link-primary" href="https://www.bcb.gov.br/estatisticas/reporttxjuros/" target="_blank" rel="noopener">Fonte: Banco Central</a>
+                  </p>
+                  <div v-if="cdiError" class="alert alert-warning py-2 px-3 small mb-2">{{ cdiError }}</div>
+                  <label class="form-label">Taxa anual (%)</label>
+                  <div class="input-group">
+                    <input
+                      v-model.number="annualRatePercent"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      class="form-control"
+                      :readonly="cdiSynced"
+                      :class="{ 'text-muted': cdiSynced }"
+                    />
+                    <button
+                      type="button"
+                      class="btn btn-outline-primary"
+                      :disabled="cdiLoading"
+                      :title="cdiSynced ? 'Atualizar série CDI no intervalo da simulação' : 'Buscar último valor publicado no SGS'"
+                      @click="refreshCdiFromBcb"
+                    >
+                      <span v-if="cdiLoading" class="spinner-border spinner-border-sm me-1" role="status"></span>
+                      <i v-else class="fas fa-sync-alt"></i>
+                      <span class="ms-1 d-none d-sm-inline">Atualizar CDI</span>
+                    </button>
+                  </div>
+                  <div v-if="cdiReferenceDate" class="form-text">
+                    <template v-if="cdiSynced && cdiSeriesPoints.length">
+                      Série CDI: <strong>{{ cdiSeriesPoints.length }}</strong> observações
+                      ({{ formatDate(cdiSeriesFrom) }} → {{ formatDate(cdiSeriesTo) }}).
+                      O campo % mostra o <strong>último</strong> valor do intervalo; referência mais recente na série: <strong>{{ cdiReferenceDate }}</strong>.
+                    </template>
+                    <template v-else>
+                      Referência SGS: <strong>{{ cdiReferenceDate }}</strong>
+                    </template>
+                  </div>
+                  <div class="mt-2">
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-outline-secondary"
+                      data-bs-toggle="modal"
+                      data-bs-target="#cdiSeriesModal"
+                    >
+                      <i class="fas fa-list-ul me-1"></i>Listar alterações do CDI usadas na simulação
+                    </button>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">Capitalização</label>
+                  <select v-model="compounding" class="form-select" :disabled="cofrinhoTaxes" :title="cofrinhoTaxes ? 'No modelo Cofrinho usa-se sempre base 252 em dias úteis.' : ''">
+                    <option value="daily">Diária (base 365 dias)</option>
+                    <option value="monthly">Mensal</option>
+                  </select>
+                  <div v-if="cofrinhoTaxes" class="form-text">Fixo: juros compostos por dia útil (252).</div>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">Saldo inicial</label>
+                  <input v-model.number="initialBalance" type="number" step="0.01" min="0" class="form-control" />
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">Início do saldo inicial</label>
+                  <input v-model="simulationStart" type="date" class="form-control" title="Data em que o saldo inicial começa a render; se houver aporte mais antigo, o período volta automaticamente." />
+                </div>
+                <div class="col-md-12">
+                  <label class="form-label">Data final da projeção</label>
+                  <input v-model="horizonDate" type="date" class="form-control" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-6">
+          <div class="card shadow-sm h-100">
+            <div class="card-header d-flex flex-wrap align-items-center gap-2">
+              <button
+                type="button"
+                class="btn btn-sm btn-outline-secondary border-secondary"
+                :title="incomeSectionExpanded ? 'Recolher seção' : 'Expandir seção'"
+                :aria-expanded="incomeSectionExpanded"
+                aria-controls="incomeSectionBody"
+                @click="incomeSectionExpanded = !incomeSectionExpanded"
+              >
+                <i class="fas" :class="incomeSectionExpanded ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+              </button>
+              <span><i class="fas fa-coins me-2"></i>Rendimento sobre o saldo final (referência)</span>
+            </div>
+            <div id="incomeSectionBody" v-show="incomeSectionExpanded" class="card-body">
+              <p class="small text-muted">
+                <template v-if="incomeHints.netBased">
+                  Médias derivadas do <strong>rendimento líquido</strong> total no período, dividido pelos dias úteis simulados (×21 / ×252 como referência).
+                </template>
+                <template v-else>
+                  Estimativas usando a taxa anual informada e o <strong>saldo final projetado</strong>, como referência de renda sobre o patrimônio na data-alvo.
+                </template>
+              </p>
+              <ul class="list-unstyled mb-0">
+                <li class="d-flex justify-content-between py-1 border-bottom border-secondary border-opacity-25">
+                  <span>Média diária útil (aprox.)</span>
+                  <strong>{{ formatMoney(incomeHints.daily) }}</strong>
+                </li>
+                <li class="d-flex justify-content-between py-1 border-bottom border-secondary border-opacity-25">
+                  <span>Média mensal (aprox. 21 úteis)</span>
+                  <strong>{{ formatMoney(incomeHints.monthly) }}</strong>
+                </li>
+                <li class="d-flex justify-content-between py-1">
+                  <span>Anualizada (aprox. 252 úteis)</span>
+                  <strong>{{ formatMoney(incomeHints.yearly) }}</strong>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card shadow-sm mb-4">
+        <div class="card-header d-flex flex-wrap align-items-center gap-3">
+          <button
+            type="button"
+            class="btn btn-sm btn-outline-secondary border-secondary"
+            :title="ledgerSectionExpanded ? 'Recolher seção' : 'Expandir seção'"
+            :aria-expanded="ledgerSectionExpanded"
+            aria-controls="ledgerSectionBody"
+            @click="ledgerSectionExpanded = !ledgerSectionExpanded"
+          >
+            <i class="fas" :class="ledgerSectionExpanded ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+          </button>
+          <span><i class="fas fa-table me-2"></i>Extrato diário</span>
+          <button
+            v-if="cofrinhoTaxes"
+            type="button"
+            class="btn btn-sm btn-outline-info"
+            data-bs-toggle="modal"
+            data-bs-target="#holidaysModal"
+          >
+            <i class="fas fa-calendar-check me-1"></i>Feriados no período
+          </button>
+          <div class="d-flex flex-wrap align-items-center gap-2 ms-lg-auto">
+            <label class="small text-muted mb-0">Filtrar</label>
+            <select v-model.number="ledgerFilterMonth" class="form-select form-select-sm" style="width: auto; min-width: 8.5rem;">
+              <option v-for="m in 12" :key="m" :value="m">{{ monthLabel(m) }}</option>
+            </select>
+            <select v-model.number="ledgerFilterYear" class="form-select form-select-sm" style="width: auto; min-width: 5rem;">
+              <option v-for="y in ledgerYearOptions" :key="y" :value="y">{{ y }}</option>
+            </select>
+          </div>
+        </div>
+        <div id="ledgerSectionBody" v-show="ledgerSectionExpanded" class="card-body">
+          <template v-if="!cofrinhoTaxes">
+            <p class="text-muted mb-0">Ative o modelo <strong>Cofrinho</strong> nos parâmetros para gerar o extrato com rendimento em dias úteis e impostos.</p>
+          </template>
+          <template v-else>
+            <p class="small text-muted mb-2">
+              Referência de <strong>hoje</strong> (navegador): {{ formatDate(todayIso) }}.
+              Na coluna <strong>Movimentação</strong>, <span class="badge rounded-pill ledger-badge-move-in">Entrada</span> (verde) e <span class="badge rounded-pill ledger-badge-move-out">Saída</span> (vermelho) indicam aportes e resgates do dia.
+              Linhas com selo <span class="badge rounded-pill ledger-badge-proj">Projeção</span> são datas futuras: <span class="ledger-val-projected px-1 rounded">Valor</span> e <span class="ledger-diff-projected px-1 rounded">Diff</span> em destaque (estimativa).
+              Rendimento líquido do dia em <span class="ledger-diff-realized px-1 rounded">fundo lilás</span> quando já “realizado”.
+              O rendimento é <strong>creditado no início</strong> do dia sobre o saldo fechado do dia anterior; movimentações do dia entram depois. Na <strong>linha do sábado</strong> aparece o crédito da sexta (badge <strong>Não</strong>). <strong>Domingo</strong> não recebe postagem; o fechamento da <strong>segunda</strong> tende a cair na <strong>terça</strong> (ou no próximo dia útil/feriado em que há postagem).
+              <strong>Feriados</strong> em dia da semana (ex. Tiradentes) podem exibir <strong>Diff</strong> quando o dia anterior foi dia útil sem feriado. A coluna <strong>Dia de rendimento?</strong>: <strong>Sim</strong> = segunda a sexta sem feriado nacional; <strong>Feriado</strong> quando houver; <strong>Não</strong> = fim de semana.
+              <strong>Feriados nacionais</strong> em dia útil não geram rendimento; o nome aparece em <span class="badge rounded-pill ledger-badge-holiday">laranja</span>.
+            </p>
+            <div class="row g-2 mb-3 ledger-month-stats">
+              <div class="col-md-4">
+                <div class="border border-secondary border-opacity-50 rounded p-3 h-100 bg-body-secondary bg-opacity-10">
+                  <div class="small text-muted mb-1">Total de rendimento no mês</div>
+                  <div class="fw-semibold">{{ formatMoney(ledgerMonthStatDiffTotal) }}</div>
+                  <div class="small text-muted mt-2 mb-0">Soma dos valores da coluna <strong>Diff</strong> ({{ monthLabel(ledgerFilterMonth) }} {{ ledgerFilterYear }}).</div>
+                </div>
+              </div>
+              <div class="col-md-4">
+                <div class="border border-secondary border-opacity-50 rounded p-3 h-100 bg-body-secondary bg-opacity-10 d-flex flex-column">
+                  <div class="small text-muted mb-2">Média por semana (cada semana do calendário)</div>
+                  <ul class="list-unstyled small mb-0 flex-grow-1 ledger-week-stats-list">
+                    <li
+                      v-for="w in ledgerMonthStatWeekBreakdown"
+                      :key="w.weekStartIso"
+                      class="d-flex flex-wrap justify-content-between gap-1 border-bottom border-secondary border-opacity-25 py-1"
+                    >
+                      <span class="text-muted text-nowrap">{{ formatDate(w.weekStartIso) }} – {{ formatDate(w.weekEndIso) }}</span>
+                      <strong class="text-end text-nowrap">
+                        <template v-if="w.avgYield !== null">{{ formatMoney(w.avgYield) }}</template>
+                        <template v-else><span class="text-muted">—</span></template>
+                      </strong>
+                    </li>
+                  </ul>
+                  <div class="small text-muted mt-2 mb-0">
+                    Por semana: soma do <strong>Diff</strong> nos dias daquela semana no extrato ÷ quantidade de dias com <strong>Diff</strong> na mesma semana.
+                  </div>
+                </div>
+              </div>
+              <div class="col-md-4">
+                <div class="border border-secondary border-opacity-50 rounded p-3 h-100 bg-body-secondary bg-opacity-10">
+                  <div class="small text-muted mb-1">Média de rendimento no mês</div>
+                  <div class="fw-semibold">
+                    <template v-if="ledgerMonthStatAvgYieldOnYieldDays !== null">{{ formatMoney(ledgerMonthStatAvgYieldOnYieldDays) }}</template>
+                    <template v-else><span class="text-muted">—</span></template>
+                  </div>
+                  <div class="small text-muted mt-2 mb-0">
+                    Total ÷ {{ ledgerMonthStatDaysWithYield }} dia(s) com <strong>Diff</strong> (dias em que houve incremento de rendimento).
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="table-responsive ledger-table-wrap">
+              <table class="table table-sm table-bordered align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th>Data</th>
+                    <th>Dia da semana</th>
+                    <th>Dia de rendimento?</th>
+                    <th class="text-end">Movimentação</th>
+                    <th class="text-end">Valor</th>
+                    <th class="text-end">Diff</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template v-if="filteredLedgerRows.length === 0">
+                    <tr>
+                      <td colspan="6" class="text-center text-muted py-4">Nenhum dia neste mês dentro do período simulado.</td>
+                    </tr>
+                  </template>
+                  <template v-else>
+                    <tr
+                      v-for="row in filteredLedgerRows"
+                      :key="row.dateIso"
+                      :class="{ 'ledger-row-projected': row.projected }"
+                    >
+                      <td>
+                        {{ formatDate(row.dateIso) }}
+                        <span v-if="row.projected" class="badge rounded-pill ms-1 ledger-badge-proj">Projeção</span>
+                      </td>
+                      <td>{{ row.weekday }}</td>
+                      <td>
+                        <span
+                          v-if="row.holidayName"
+                          class="badge rounded-pill ledger-badge-holiday"
+                          :title="'Feriado nacional: ' + row.holidayName"
+                        >Feriado: {{ row.holidayName }}</span>
+                        <span
+                          v-else-if="row.calendarBusinessDay"
+                          class="badge rounded-pill ledger-badge-yield-yes"
+                          title="Dia útil de calendário (segunda a sexta, sem feriado nacional)"
+                        >Sim</span>
+                        <span
+                          v-else
+                          class="badge rounded-pill ledger-badge-yield-no"
+                          title="Fim de semana ou sem dia útil de calendário"
+                        >Não</span>
+                      </td>
+                      <td class="text-end">
+                        <template v-if="row.movement === 0">
+                          <span class="text-muted">—</span>
+                        </template>
+                        <template v-else-if="row.movement > 0">
+                          <span
+                            v-for="mf in positiveMovementFlows(row)"
+                            :key="mf.id"
+                            class="badge rounded-pill ledger-badge-move-in ledger-move-click me-1 mb-1"
+                            role="button"
+                            tabindex="0"
+                            title="Clique para ver o rendimento líquido diário deste aporte (IOF + IR)"
+                            @click="openAporteYieldDetail(mf)"
+                            @keydown.enter.prevent="openAporteYieldDetail(mf)"
+                          >
+                            <i class="fas fa-arrow-circle-down me-1" aria-hidden="true"></i>Entrada
+                            <span class="ledger-move-amt ms-1">{{ formatSignedMoney(mf.amount) }}</span>
+                          </span>
+                        </template>
+                        <span
+                          v-else
+                          class="badge rounded-pill ledger-badge-move-out ledger-move-click"
+                          role="button"
+                          tabindex="0"
+                          title="Clique para informações sobre resgates e rendimento"
+                          @click="openWithdrawalYieldInfo"
+                          @keydown.enter.prevent="openWithdrawalYieldInfo"
+                        >
+                          <i class="fas fa-arrow-circle-up me-1" aria-hidden="true"></i>Saída
+                          <span class="ledger-move-amt ms-1">{{ formatSignedMoney(row.movement) }}</span>
+                        </span>
+                      </td>
+                      <td
+                        class="text-end font-monospace"
+                        :class="{ 'ledger-val-projected': row.projected }"
+                      >
+                        {{ formatMoney(row.valor) }}
+                      </td>
+                      <td
+                        class="text-end font-monospace"
+                        :class="{
+                          'ledger-diff-projected': row.projected && row.diff !== null,
+                          'ledger-diff-realized': !row.projected && row.diff !== null
+                        }"
+                      >
+                        <template v-if="row.diff !== null">{{ formatMoney(row.diff) }}</template>
+                        <template v-else>—</template>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <div class="card shadow-sm mb-4">
+        <div class="card-header d-flex flex-wrap align-items-center gap-2">
+          <button
+            type="button"
+            class="btn btn-sm btn-outline-secondary border-secondary"
+            :title="movementsSectionExpanded ? 'Recolher seção' : 'Expandir seção'"
+            :aria-expanded="movementsSectionExpanded"
+            aria-controls="movementsSectionBody"
+            @click="movementsSectionExpanded = !movementsSectionExpanded"
+          >
+            <i class="fas" :class="movementsSectionExpanded ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+          </button>
+          <span><i class="fas fa-exchange-alt me-2"></i>Movimentações</span>
+          <span class="badge bg-secondary">{{ flows.length }} registro(s)</span>
+          <div class="btn-group btn-group-sm ms-auto dropdown">
+            <button
+              type="button"
+              class="btn btn-outline-secondary dropdown-toggle"
+              data-bs-toggle="dropdown"
+              aria-expanded="false"
+            >
+              Exportar
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark">
+              <li>
+                <button type="button" class="dropdown-item" @click="exportFlowsJson">JSON</button>
+              </li>
+              <li>
+                <button type="button" class="dropdown-item" @click="exportFlowsCsv">CSV (Excel)</button>
+              </li>
+            </ul>
+            <button type="button" class="btn btn-outline-secondary" @click="triggerImportFlows">Importar</button>
+          </div>
+          <input
+            ref="importFlowsInput"
+            type="file"
+            class="d-none"
+            accept=".json,.csv,application/json,text/csv"
+            @change="onImportFlowsFile"
+          />
+        </div>
+        <div id="movementsSectionBody" v-show="movementsSectionExpanded" class="card-body">
+          <div v-if="flowsImportMessage" class="alert alert-secondary py-2 px-3 small mb-3" role="status">
+            {{ flowsImportMessage }}
+          </div>
+          <form class="row g-2 align-items-end mb-4" @submit.prevent="addFlow">
+            <div class="col-md-3">
+              <label class="form-label mb-1">Data</label>
+              <input v-model="newFlow.date" type="date" class="form-control" required />
+            </div>
+            <div class="col-md-2">
+              <label class="form-label mb-1">Tipo</label>
+              <select v-model="newFlow.kind" class="form-select">
+                <option value="in">Entrada</option>
+                <option value="out">Saída</option>
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label mb-1">Valor (R$)</label>
+              <input v-model.number="newFlow.amount" type="number" step="0.01" min="0.01" class="form-control" required />
+            </div>
+            <div class="col-md-3">
+              <label class="form-label mb-1">Descrição</label>
+              <input v-model.trim="newFlow.label" type="text" class="form-control" placeholder="Opcional" />
+            </div>
+            <div class="col-md-1">
+              <button type="submit" class="btn btn-primary w-100" title="Adicionar">
+                <i class="fas fa-plus"></i>
+              </button>
+            </div>
+          </form>
+
+          <div v-if="sortedFlows.length === 0" class="text-muted text-center py-4">
+            Nenhuma movimentação. Adicione entradas e saídas para montar o cenário.
+          </div>
+          <div v-else class="table-responsive">
+            <table class="table table-sm table-hover align-middle mb-0">
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th>Descrição</th>
+                  <th class="text-end">Valor</th>
+                  <th class="text-end">Impacto no saldo final <i class="fas fa-info-circle text-muted ms-1" title="Quanto o saldo final mudaria se esta linha fosse removida. Entrada removida reduz o saldo; saída removida aumenta."></i></th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="f in sortedFlows" :key="f.id">
+                  <td>{{ formatDate(f.date) }}</td>
+                  <td>{{ f.label || '—' }}</td>
+                  <td class="text-end" :class="f.amount >= 0 ? 'amount-in' : 'amount-out'">
+                    {{ f.amount >= 0 ? '+' : '' }}{{ formatMoney(f.amount) }}
+                  </td>
+                  <td class="text-end font-monospace small">
+                    <span v-if="impactById[f.id] !== undefined" :class="impactById[f.id] >= 0 ? 'text-success' : 'text-danger'">
+                      {{ impactById[f.id] >= 0 ? '+' : '' }}{{ formatMoney(impactById[f.id]) }}
+                    </span>
+                    <span v-else class="text-muted">—</span>
+                  </td>
+                  <td class="text-end">
+                    <button type="button" class="btn btn-sm btn-outline-danger" @click="removeFlow(f.id)" title="Remover">
+                      <i class="fas fa-trash-alt"></i>
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <p class="small text-muted text-center mb-0">
+        Simulação para planejamento; não substitui extrato do banco.
+        <template v-if="!cofrinhoTaxes">Não considera impostos.</template>
+        <template v-else>Impostos conforme regras usuais de CDB sobre rendimento; não inclui custódia nem inflação. Feriados: calendário nacional federal (fixos + Carnaval, Sexta-feira Santa, Corpus Christi).</template>
+        Desligue “Cofrinho” para simular juros sem impostos (modelo genérico).
+      </p>
+
+      <div
+        class="modal fade modal-holidays"
+        id="movementYieldModal"
+        tabindex="-1"
+        aria-labelledby="movementYieldModalLabel"
+        aria-hidden="true"
+      >
+        <div class="modal-dialog modal-dialog-scrollable modal-xl">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 id="movementYieldModalLabel" class="modal-title">
+                <template v-if="aporteYieldModalKind === 'in' && aporteYieldModalFlow">
+                  <i class="fas fa-arrow-circle-down me-2 text-success"></i>Rendimento do aporte
+                </template>
+                <template v-else-if="aporteYieldModalKind === 'out'">
+                  <i class="fas fa-arrow-circle-up me-2 text-danger"></i>Resgates e rendimento
+                </template>
+                <template v-else>Movimentação</template>
+              </h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+            </div>
+            <div class="modal-body">
+              <template v-if="aporteYieldModalKind === 'in' && aporteYieldModalFlow">
+                <p class="mb-2">
+                  <strong>{{ formatDate(aporteYieldModalFlow.date) }}</strong>
+                  · {{ formatSignedMoney(aporteYieldModalFlow.amount) }}
+                  <span v-if="aporteYieldModalFlow.label" class="text-muted"> — {{ aporteYieldModalFlow.label }}</span>
+                </p>
+                <p class="small text-muted mb-3">
+                  Simulação <strong>isolada</strong> deste único aporte (saldo inicial zero, só este fluxo), com as mesmas regras do extrato Cofrinho:
+                  rendimento em dias de postagem, fator <strong>(1 + CDI do dia)<sup>1/252</sup> − 1</strong> sobre o CDI <strong>a.a.</strong> daquele dia (série BCB se ativo; taxa fixa nos parâmetros caso contrário), IOF regressivo e IR conforme dias corridos desde o aporte.
+                  A coluna <strong>% CDI diário (÷ 252)</strong> mostra só o linear <strong>(CDI a.a. em decimal) ÷ 252</strong> em %; o crédito na simulação usa o fator composto acima.
+                </p>
+                <div class="d-flex flex-wrap justify-content-end align-items-center gap-2 mb-2" v-if="aporteYieldModalTableRows.length">
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-outline-light"
+                    @click="copyAporteYieldModalTable"
+                  >
+                    <i class="fas fa-copy me-1"></i>Copiar tabela
+                  </button>
+                  <span v-show="aporteYieldTableCopyOk" class="small text-success">Copiado para a área de transferência.</span>
+                </div>
+                <div class="table-responsive">
+                  <table class="table table-sm table-bordered align-middle mb-0">
+                    <thead>
+                      <tr>
+                        <th>Data</th>
+                        <th>Dia</th>
+                        <th class="text-end">CDI (% a.a. do dia)</th>
+                        <th class="text-end">% CDI diário (÷ 252)</th>
+                        <th class="text-end">% IOF (dia)</th>
+                        <th class="text-end">IOF (dia)</th>
+                        <th class="text-end">% IR (dia)</th>
+                        <th class="text-end">IR (dia)</th>
+                        <th class="text-end">Rendimento líquido do dia (só este aporte)</th>
+                        <th class="text-end">Saldo do aporte após o dia</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="r in aporteYieldModalTableRows" :key="r.dateIso">
+                        <td class="text-nowrap">
+                          {{ formatDate(r.dateIso) }}
+                          <span v-if="r.projected" class="badge rounded-pill ms-1 ledger-badge-proj">Projeção</span>
+                        </td>
+                        <td>{{ r.weekday }}</td>
+                        <td class="text-end font-monospace small">{{ formatCdiAnnualPercent(r.cdiAnnualDecimal) }}</td>
+                        <td class="text-end font-monospace small">{{ formatCdiDailyLinearPercent(r.cdiAnnualDecimal) }}</td>
+                        <td class="text-end font-monospace tax-iof-pct-cell">
+                          <template v-if="r.dailyIof !== null && r.dailyIof !== undefined">{{ formatTaxDayPercent(r.dailyIofPct) }}</template>
+                          <template v-else><span class="text-muted">—</span></template>
+                        </td>
+                        <td class="text-end font-monospace tax-iof-amt-cell">
+                          <template v-if="r.dailyIof !== null && r.dailyIof !== undefined">{{ formatMoney(r.dailyIof) }}</template>
+                          <template v-else><span class="text-muted">—</span></template>
+                        </td>
+                        <td class="text-end font-monospace tax-ir-pct-cell">
+                          <template v-if="r.dailyIr !== null && r.dailyIr !== undefined">{{ formatTaxDayPercent(r.dailyIrPct) }}</template>
+                          <template v-else><span class="text-muted">—</span></template>
+                        </td>
+                        <td class="text-end font-monospace tax-ir-amt-cell">
+                          <template v-if="r.dailyIr !== null && r.dailyIr !== undefined">{{ formatMoney(r.dailyIr) }}</template>
+                          <template v-else><span class="text-muted">—</span></template>
+                        </td>
+                        <td class="text-end font-monospace">
+                          <template v-if="r.diff !== null">{{ formatMoney(r.diff) }}</template>
+                          <template v-else><span class="text-muted">—</span></template>
+                        </td>
+                        <td class="text-end font-monospace">{{ formatMoney(r.valor) }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <p class="small text-muted mt-3 mb-0">
+                  <strong>Totais no período exibido:</strong> IOF {{ formatMoney(aporteYieldModalTotalIof) }} · IR {{ formatMoney(aporteYieldModalTotalIr) }} ·
+                  rendimento líquido {{ formatMoney(aporteYieldModalNetTotal) }}.
+                </p>
+              </template>
+              <template v-else-if="aporteYieldModalKind === 'out'">
+                <p class="mb-2">O valor da coluna <strong>Diff</strong> no extrato é o rendimento líquido de <strong>todas</strong> as camadas de aporte somadas no dia.</p>
+                <p class="small text-muted mb-0">
+                  Resgates consomem os aportes mais antigos (FIFO). Por isso não há uma tabela “só deste resgate” paralela ao extrato: o impacto no rendimento depende de quais aportes foram reduzidos.
+                  Use o detalhe por clique em cada <strong>Entrada</strong> para ver a curva de IOF/IR daquele aporte isolado.
+                </p>
+              </template>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div
+        class="modal fade modal-holidays"
+        id="cdiSeriesModal"
+        tabindex="-1"
+        aria-labelledby="cdiSeriesModalLabel"
+        aria-hidden="true"
+      >
+        <div class="modal-dialog modal-dialog-scrollable modal-lg">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title" id="cdiSeriesModalLabel">
+                <i class="fas fa-chart-line me-2 text-primary"></i>CDI (SGS 4389) usado na simulação
+              </h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+            </div>
+            <div class="modal-body">
+              <template v-if="!cdiSynced">
+                <p class="text-muted mb-0">Ative <strong>Usar CDI oficial</strong> e use <strong>Atualizar CDI</strong> para carregar a série do Banco Central no intervalo da simulação.</p>
+              </template>
+              <template v-else-if="cdiLoading">
+                <p class="text-muted mb-0"><span class="spinner-border spinner-border-sm me-2" role="status"></span>Carregando série…</p>
+              </template>
+              <template v-else-if="!cdiSeriesPoints.length">
+                <p class="text-muted mb-0">Nenhum ponto carregado. Ajuste as datas ou clique em <strong>Atualizar CDI</strong>. <span v-if="cdiError" class="d-block mt-2 text-warning">{{ cdiError }}</span></p>
+              </template>
+              <template v-else>
+                <p class="small text-muted">
+                  Cada linha é uma <strong>data de divulgação</strong> na série do BCB; na simulação vale o <strong>último</strong> valor publicado até o dia da postagem (carry-forward), entre
+                  <strong>{{ formatDate(cdiSeriesFrom) }}</strong> e <strong>{{ formatDate(cdiSeriesTo) }}</strong>
+                  ({{ cdiSeriesPoints.length }} alterações).
+                </p>
+                <div class="table-responsive">
+                  <table class="table table-sm table-bordered align-middle mb-0">
+                    <thead>
+                      <tr>
+                        <th>Data (SGS)</th>
+                        <th class="text-end">CDI % a.a. (base 252)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="(p, idx) in cdiSeriesPoints" :key="p.dateIso + '-' + idx">
+                        <td class="text-nowrap">{{ p.dataBr || formatDate(p.dateIso) }}</td>
+                        <td class="text-end font-monospace">{{ formatCdiAnnualPercent(p.annualDecimal) }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </template>
+            </div>
+            <div class="modal-footer">
+              <a class="btn btn-outline-primary btn-sm" href="https://www.bcb.gov.br/estatisticas/reporttxjuros/" target="_blank" rel="noopener">BCB — taxas de juros</a>
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div
+        class="modal fade modal-holidays"
+        id="holidaysModal"
+        tabindex="-1"
+        aria-labelledby="holidaysModalLabel"
+        aria-hidden="true"
+      >
+        <div class="modal-dialog modal-dialog-scrollable modal-lg">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title" id="holidaysModalLabel">
+                <i class="fas fa-flag me-2 text-warning"></i>Feriados nacionais no período
+              </h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+            </div>
+            <div class="modal-body">
+              <p class="small text-muted">
+                Entre <strong>{{ formatDate(periodStart) }}</strong> e <strong>{{ formatDate(horizonDate) }}</strong> (datas da simulação). Nestes dias, em dia útil, o modelo assume <strong>sem rendimento</strong>, como nos Cofrinhos/CDB em geral.
+              </p>
+              <div v-if="holidaysListForModal.length === 0" class="text-muted py-3">Nenhum feriado federal neste intervalo.</div>
+              <div v-else class="table-responsive">
+                <table class="table table-sm table-bordered align-middle mb-0">
+                  <thead>
+                    <tr>
+                      <th>Data</th>
+                      <th>Feriado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="h in holidaysListForModal" :key="h.date">
+                      <td class="text-nowrap">{{ formatDate(h.date) }}</td>
+                      <td>{{ h.name }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="src/js/bootstrap-v5.3.8.js"></script>
+  <script src="src/js/vue.js"></script>
+  <script src="src/js/br-holidays.js"></script>
+  <script src="src/js/investment-app.js"></script>
+</body>
+</html>
