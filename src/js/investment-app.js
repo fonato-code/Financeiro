@@ -223,16 +223,249 @@
     return 0.15;
   }
 
-  function fifoWithdraw(layers, amount) {
+  function cofrinhoLayerKeyFromParts(source, flowId, open) {
+    return `${source || 'deposit'}|${flowId == null ? '' : String(flowId)}|${open || ''}`;
+  }
+
+  function cofrinhoLayerKey(L) {
+    return cofrinhoLayerKeyFromParts(L.source, L.flowId, L.open);
+  }
+
+  /**
+   * Retirada FIFO: reduz principais das camadas mais antigas.
+   * @param {object|null} recorder Se definido, registra cada fatia em `recorder.map` por chave da camada.
+   */
+  function fifoWithdraw(layers, amount, recorder) {
     let left = Math.max(0, amount);
     for (const L of layers) {
       if (left <= 1e-12) break;
       if (L.principal <= 1e-12) continue;
       const take = Math.min(L.principal, left);
+      if (recorder && take > 1e-14) {
+        const key = cofrinhoLayerKey(L);
+        if (!recorder.map.has(key)) recorder.map.set(key, []);
+        recorder.map.get(key).push({
+          withdrawFlowId: recorder.withdrawFlow.id,
+          withdrawDate: recorder.withdrawFlow.date,
+          withdrawLabel: recorder.withdrawFlow.label,
+          withdrawAmount: recorder.withdrawFlow.amount,
+          takenFromLayer: take,
+        });
+      }
       L.principal -= take;
       left -= take;
     }
     return layers.filter((L) => L.principal > 1e-9);
+  }
+
+  function pushCofrinhoInitialLayer(layers, initialBalance, periodStart) {
+    if ((Number(initialBalance) || 0) > 0) {
+      layers.push({
+        principal: Number(initialBalance),
+        open: periodStart,
+        source: 'initial',
+        flowId: null,
+      });
+    }
+  }
+
+  function pushCofrinhoDepositLayer(layers, f) {
+    layers.push({
+      principal: f.amount,
+      open: f.date,
+      source: 'deposit',
+      flowId: f.id,
+    });
+  }
+
+  /**
+   * Um dia do Cofrinho: postagem do rendimento (manhã) → movimentações.
+   * Muta `layers` in-place. Usado pelo extrato, simulateCofrinho e pelo replay do modal Diff.
+   */
+  function advanceCofrinhoOneDay(cur, layers, dayFlows, hm, resolveAnnualRate, opts) {
+    const collect = opts && opts.collectLayerBreakdown;
+    const rCur = resolveAnnualRate(cur);
+    const postedYield = shouldPostCofrinhoYieldOnDate(cur, hm, rCur);
+    let diff = 0;
+    let dayIof = 0;
+    let dayIr = 0;
+    let dayGross = 0;
+    let dayTaxableBaseIr = 0;
+    let fator = 0;
+    let businessDayIncrement = 0;
+    const layerBreakdown = [];
+
+    if (postedYield) {
+      fator = Math.pow(1 + rCur, 1 / 252) - 1;
+      businessDayIncrement = 1;
+      for (const layer of layers) {
+        if (layer.principal <= 1e-12) continue;
+        const principalBefore = layer.principal;
+        const gross = principalBefore * fator;
+        const n = calendarDaysInclusive(layer.open, cur);
+        const iofPctDec = iofRateOnYield(n);
+        const irPctDec = irRateOnYield(n);
+        const iof = gross * iofPctDec;
+        const baseIr = gross - iof;
+        const ir = baseIr * irPctDec;
+        const net = gross - iof - ir;
+        if (collect) {
+          layerBreakdown.push({
+            source: layer.source || 'deposit',
+            flowId: layer.flowId,
+            open: layer.open,
+            principalBefore,
+            gross,
+            iof,
+            ir,
+            net,
+            iofPct: iofPctDec * 100,
+            irPct: irPctDec * 100,
+            daysSinceOpen: n,
+          });
+        }
+        layer.principal += net;
+        diff += net;
+        dayIof += iof;
+        dayIr += ir;
+        dayGross += gross;
+        dayTaxableBaseIr += baseIr;
+      }
+    }
+
+    let dailyIofPct = null;
+    let dailyIrPct = null;
+    if (postedYield) {
+      dailyIofPct = dayGross > 1e-14 ? (dayIof / dayGross) * 100 : 0;
+      dailyIrPct = dayTaxableBaseIr > 1e-14 ? (dayIr / dayTaxableBaseIr) * 100 : 0;
+    }
+
+    const wRec = opts && opts.withdrawalAllocRecorder;
+    for (const f of dayFlows) {
+      if (f.amount >= 0) {
+        pushCofrinhoDepositLayer(layers, f);
+      } else {
+        if (wRec) wRec.withdrawFlow = f;
+        fifoWithdraw(layers, -f.amount, wRec || null);
+      }
+    }
+
+    const valor = sumLayersPrincipal(layers);
+    let movement = 0;
+    for (const f of dayFlows) {
+      movement += f.amount;
+    }
+
+    return {
+      postedYield,
+      diff: postedYield ? diff : null,
+      dailyIof: postedYield ? dayIof : null,
+      dailyIr: postedYield ? dayIr : null,
+      dailyIofPct,
+      dailyIrPct,
+      rCur,
+      fator: postedYield ? fator : null,
+      layerBreakdown: collect ? layerBreakdown : null,
+      valor,
+      movement,
+      businessDayIncrement,
+      dayGrossYield: postedYield ? dayGross : 0,
+      dayIofTotal: postedYield ? dayIof : 0,
+      dayIrTotal: postedYield ? dayIr : 0,
+    };
+  }
+
+  /**
+   * Replay do Cofrinho até `targetIso` e retorna o detalhe do rendimento daquele dia (por camada).
+   */
+  function computeCofrinhoLedgerDiffBreakdown(
+    targetIso,
+    initialBalance,
+    flows,
+    periodStart,
+    horizonDate,
+    holidayMap,
+    resolveAnnualRate
+  ) {
+    const hm = holidayMap || {};
+    if (compareIso(periodStart, horizonDate) > 0) {
+      return { ok: false, reason: 'Período inválido.' };
+    }
+    if (compareIso(targetIso, periodStart) < 0 || compareIso(targetIso, horizonDate) > 0) {
+      return { ok: false, reason: 'Data fora do período simulado.' };
+    }
+
+    const sorted = [...flows].sort((a, b) => {
+      const c = a.date.localeCompare(b.date);
+      return c !== 0 ? c : String(a.id).localeCompare(String(b.id));
+    });
+
+    const flowsByDate = new Map();
+    for (const f of sorted) {
+      if (!flowsByDate.has(f.date)) flowsByDate.set(f.date, []);
+      flowsByDate.get(f.date).push(f);
+    }
+
+    const layers = [];
+    pushCofrinhoInitialLayer(layers, initialBalance, periodStart);
+
+    const withdrawalAllocByLayer = new Map();
+    const withRecorder = { map: withdrawalAllocByLayer, withdrawFlow: null };
+
+    let cur = periodStart;
+    while (compareIso(cur, horizonDate) <= 0) {
+      const dayFlows = flowsByDate.get(cur) || [];
+      if (compareIso(cur, targetIso) < 0) {
+        advanceCofrinhoOneDay(cur, layers, dayFlows, hm, resolveAnnualRate, {
+          withdrawalAllocRecorder: withRecorder,
+        });
+      } else if (cur === targetIso) {
+        const res = advanceCofrinhoOneDay(cur, layers, dayFlows, hm, resolveAnnualRate, {
+          collectLayerBreakdown: true,
+        });
+        const lb = res.layerBreakdown || [];
+        for (const ln of lb) {
+          const k = cofrinhoLayerKeyFromParts(ln.source, ln.flowId, ln.open);
+          const arr = withdrawalAllocByLayer.get(k);
+          ln.withdrawalsFromLayer = arr ? [...arr] : [];
+        }
+        let tg = 0;
+        let ti = 0;
+        let tr = 0;
+        let tn = 0;
+        for (const L of lb) {
+          tg += L.gross;
+          ti += L.iof;
+          tr += L.ir;
+          tn += L.net;
+        }
+        return {
+          ok: true,
+          dateIso: cur,
+          postedYield: res.postedYield,
+          diff: res.diff,
+          rCur: res.rCur,
+          fator: res.fator,
+          dailyIof: res.dailyIof,
+          dailyIr: res.dailyIr,
+          dailyIofPct: res.dailyIofPct,
+          dailyIrPct: res.dailyIrPct,
+          layerBreakdown: lb,
+          totals: { gross: tg, iof: ti, ir: tr, net: tn },
+          dayFlows: dayFlows.map((f) => ({
+            id: f.id,
+            amount: f.amount,
+            label: f.label,
+            date: f.date,
+          })),
+          movement: res.movement,
+        };
+      }
+      if (cur === horizonDate) break;
+      cur = addOneCalendarDayIso(cur);
+    }
+
+    return { ok: false, reason: 'Não foi possível reconstruir o dia.' };
   }
 
   function growBalance(balance, fromStr, toStr, annualRate, compounding) {
@@ -300,9 +533,7 @@
     });
 
     const layers = [];
-    if ((Number(initialBalance) || 0) > 0) {
-      layers.push({ principal: Number(initialBalance), open: periodStart });
-    }
+    pushCofrinhoInitialLayer(layers, initialBalance, periodStart);
 
     let totalGross = 0;
     let totalIof = 0;
@@ -333,36 +564,13 @@
 
     while (compareIso(cur, end) <= 0) {
       const dayFlows = flowsByDate.get(cur) || [];
-
-      const rCur = resolveAnnualRate(cur);
-      if (shouldPostCofrinhoYieldOnDate(cur, hm, rCur)) {
-        const fator = Math.pow(1 + rCur, 1 / 252) - 1;
-        businessDays += 1;
-        for (const layer of layers) {
-          if (layer.principal <= 1e-12) continue;
-          const gross = layer.principal * fator;
-          const n = calendarDaysInclusive(layer.open, cur);
-          const iofPct = iofRateOnYield(n);
-          const irPct = irRateOnYield(n);
-          const iof = gross * iofPct;
-          const baseIr = gross - iof;
-          const ir = baseIr * irPct;
-          const net = gross - iof - ir;
-          layer.principal += net;
-          totalGross += gross;
-          totalIof += iof;
-          totalIr += ir;
-        }
+      const res = advanceCofrinhoOneDay(cur, layers, dayFlows, hm, resolveAnnualRate, {});
+      if (res.postedYield) {
+        businessDays += res.businessDayIncrement;
+        totalGross += res.dayGrossYield;
+        totalIof += res.dayIofTotal;
+        totalIr += res.dayIrTotal;
       }
-
-      for (const f of dayFlows) {
-        if (f.amount >= 0) {
-          layers.push({ principal: f.amount, open: f.date });
-        } else {
-          fifoWithdraw(layers, -f.amount);
-        }
-      }
-
       if (cur === end) break;
       cur = addOneCalendarDayIso(cur);
     }
@@ -406,9 +614,7 @@
     });
 
     const layers = [];
-    if ((Number(initialBalance) || 0) > 0) {
-      layers.push({ principal: Number(initialBalance), open: periodStart });
-    }
+    pushCofrinhoInitialLayer(layers, initialBalance, periodStart);
 
     const rows = [];
     let cur = periodStart;
@@ -423,54 +629,7 @@
 
     while (compareIso(cur, end) <= 0) {
       const dayFlows = flowsByDate.get(cur) || [];
-      let movement = 0;
-      for (const f of dayFlows) {
-        movement += f.amount;
-      }
-
-      let diff = 0;
-      let dayIof = 0;
-      let dayIr = 0;
-      let dayGross = 0;
-      let dayTaxableBaseIr = 0;
-      const rCur = resolveAnnualRate(cur);
-      const postedYield = shouldPostCofrinhoYieldOnDate(cur, hm, rCur);
-      if (postedYield) {
-        const fator = Math.pow(1 + rCur, 1 / 252) - 1;
-        for (const layer of layers) {
-          if (layer.principal <= 1e-12) continue;
-          const gross = layer.principal * fator;
-          const n = calendarDaysInclusive(layer.open, cur);
-          const iofPct = iofRateOnYield(n);
-          const irPct = irRateOnYield(n);
-          const iof = gross * iofPct;
-          const baseIr = gross - iof;
-          const ir = baseIr * irPct;
-          const net = gross - iof - ir;
-          layer.principal += net;
-          diff += net;
-          dayIof += iof;
-          dayIr += ir;
-          dayGross += gross;
-          dayTaxableBaseIr += baseIr;
-        }
-      }
-      let dailyIofPct = null;
-      let dailyIrPct = null;
-      if (postedYield) {
-        dailyIofPct = dayGross > 1e-14 ? (dayIof / dayGross) * 100 : 0;
-        dailyIrPct = dayTaxableBaseIr > 1e-14 ? (dayIr / dayTaxableBaseIr) * 100 : 0;
-      }
-
-      for (const f of dayFlows) {
-        if (f.amount >= 0) {
-          layers.push({ principal: f.amount, open: f.date });
-        } else {
-          fifoWithdraw(layers, -f.amount);
-        }
-      }
-
-      const valor = sumLayersPrincipal(layers);
+      const res = advanceCofrinhoOneDay(cur, layers, dayFlows, hm, resolveAnnualRate, {});
       const d = parseISODate(cur);
       const projected = compareIso(cur, todayIso) > 0;
       const holidayName = isWeekdayIso(cur) && hm[cur] ? hm[cur] : null;
@@ -480,21 +639,21 @@
         weekday: weekdayPtFromIso(cur),
         calendarBusinessDay: isCalendarCofrinhoBusinessDay(cur, hm),
         holidayName,
-        movement,
+        movement: res.movement,
         movementFlows: dayFlows.map((f) => ({
           id: f.id,
           amount: f.amount,
           label: f.label,
           date: f.date,
         })),
-        valor,
-        diff: postedYield ? diff : null,
-        dailyIof: postedYield ? dayIof : null,
-        dailyIr: postedYield ? dayIr : null,
-        dailyIofPct: postedYield ? dailyIofPct : null,
-        dailyIrPct: postedYield ? dailyIrPct : null,
+        valor: res.valor,
+        diff: res.diff,
+        dailyIof: res.dailyIof,
+        dailyIr: res.dailyIr,
+        dailyIofPct: res.dailyIofPct,
+        dailyIrPct: res.dailyIrPct,
         /** CDI (ou taxa anual efetiva do dia) em decimal a.a., ex.: 0,1415 = 14,15%. */
-        cdiAnnualDecimal: rCur,
+        cdiAnnualDecimal: res.rCur,
         projected,
         month: d ? d.getMonth() + 1 : 1,
         year: d ? d.getFullYear() : new Date().getFullYear(),
@@ -533,6 +692,14 @@
       aporteYieldModalRows: [],
       aporteYieldTableCopyOk: false,
       _aporteYieldCopyTimer: null,
+      ledgerDiffDetail: null,
+      withdrawImpactSim: {
+        amount: 1000,
+        withdrawDate: '',
+        restoreDate: '',
+      },
+      withdrawImpactResult: null,
+      withdrawImpactError: '',
       compounding: 'daily',
       initialBalance: 0,
       horizonDate: iso(horizon),
@@ -1145,6 +1312,165 @@
         if (el && typeof bootstrap !== 'undefined' && bootstrap.Modal) {
           bootstrap.Modal.getOrCreateInstance(el).show();
         }
+      },
+      showLedgerDiffDetailModal() {
+        const el = document.getElementById('ledgerDiffDetailModal');
+        if (el && typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+          bootstrap.Modal.getOrCreateInstance(el).show();
+        }
+      },
+      showWithdrawImpactModal() {
+        const el = document.getElementById('withdrawImpactModal');
+        if (el && typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+          bootstrap.Modal.getOrCreateInstance(el).show();
+        }
+      },
+      openWithdrawImpactModal() {
+        this.withdrawImpactResult = null;
+        this.withdrawImpactError = '';
+        const lo = this.periodStart;
+        const hi = this.horizonDate;
+        let wd = this.withdrawImpactSim.withdrawDate;
+        let rd = this.withdrawImpactSim.restoreDate;
+        if (!wd || compareIso(wd, lo) < 0 || compareIso(wd, hi) > 0) {
+          wd = compareIso(this.todayIso, lo) < 0 ? lo : this.todayIso;
+          if (compareIso(wd, hi) > 0) wd = hi;
+          this.withdrawImpactSim.withdrawDate = wd;
+        }
+        if (!rd || compareIso(rd, lo) < 0 || compareIso(rd, hi) > 0) {
+          rd = addCalendarDaysIso(wd, 90);
+          if (compareIso(rd, hi) > 0) rd = hi;
+          if (compareIso(rd, wd) < 0) rd = wd;
+          this.withdrawImpactSim.restoreDate = rd;
+        }
+        this.$nextTick(() => this.showWithdrawImpactModal());
+      },
+      /** Saldo final Cofrinho com lista de fluxos (mesma regra de período e feriados do app). */
+      cofrinhoFinalBalanceForFlows(flowList) {
+        const sorted = [...flowList].sort((a, b) => {
+          const c = a.date.localeCompare(b.date);
+          return c !== 0 ? c : String(a.id).localeCompare(String(b.id));
+        });
+        const ps = this.periodStartWithout(sorted);
+        const hm =
+          typeof BrHolidays !== 'undefined' && BrHolidays.holidayMapBetween
+            ? BrHolidays.holidayMapBetween(ps, this.horizonDate)
+            : {};
+        return simulateCofrinho(
+          this.initialBalance,
+          sorted,
+          ps,
+          this.horizonDate,
+          hm,
+          this.cdiResolveAnnualRate
+        ).finalBalance;
+      },
+      runWithdrawImpactSimulation() {
+        this.withdrawImpactResult = null;
+        this.withdrawImpactError = '';
+        if (!this.cofrinhoTaxes) {
+          this.withdrawImpactError = 'Ative o modelo Cofrinho para usar esta simulação.';
+          return;
+        }
+        const W = Number(this.withdrawImpactSim.amount);
+        if (!W || W <= 0 || Number.isNaN(W)) {
+          this.withdrawImpactError = 'Informe um valor de retirada maior que zero.';
+          return;
+        }
+        const wd = this.withdrawImpactSim.withdrawDate;
+        const rd = this.withdrawImpactSim.restoreDate;
+        if (!wd || !rd) {
+          this.withdrawImpactError = 'Informe as duas datas.';
+          return;
+        }
+        const lo = this.periodStart;
+        const hi = this.horizonDate;
+        if (compareIso(wd, lo) < 0 || compareIso(wd, hi) > 0 || compareIso(rd, lo) < 0 || compareIso(rd, hi) > 0) {
+          this.withdrawImpactError = 'As datas devem estar entre o início do período simulado e o horizonte.';
+          return;
+        }
+        if (compareIso(rd, wd) < 0) {
+          this.withdrawImpactError = 'A data de reposição não pode ser anterior à data da retirada.';
+          return;
+        }
+
+        const baseline = this.simulation.finalBalance;
+        const wFlow = {
+          id: 'sim-impact-w',
+          date: wd,
+          amount: -W,
+          label: '[Simulação] Retirada',
+        };
+        const zFlow = (extra) => ({
+          id: 'sim-impact-z',
+          date: rd,
+          amount: W + extra,
+          label: '[Simulação] Reposição',
+        });
+
+        const finalOnlyWithdraw = this.cofrinhoFinalBalanceForFlows([...this.flows, wFlow]);
+        const finalPair = (extra) => this.cofrinhoFinalBalanceForFlows([...this.flows, wFlow, zFlow(extra)]);
+
+        const withPair0 = finalPair(0);
+        const deficitVsBaseline = baseline - withPair0;
+        const impactPermanentWithdraw = baseline - finalOnlyWithdraw;
+
+        let extraBreakEven = 0;
+        const tol = 0.01;
+        if (withPair0 + tol < baseline) {
+          let loE = 0;
+          let hiE = Math.max(Math.abs(deficitVsBaseline) * 2, W * 0.01, 1);
+          let guard = 0;
+          while (finalPair(hiE) + tol < baseline && hiE < 1e12 && guard < 48) {
+            hiE *= 2;
+            guard += 1;
+          }
+          if (finalPair(hiE) + tol < baseline) {
+            this.withdrawImpactError =
+              'Não foi possível encontrar valor de reposição adicional no intervalo testado (tente datas ou valor diferentes).';
+            return;
+          }
+          for (let i = 0; i < 56; i += 1) {
+            const mid = (loE + hiE) / 2;
+            if (finalPair(mid) + tol >= baseline) hiE = mid;
+            else loE = mid;
+          }
+          extraBreakEven = hiE;
+        }
+
+        this.withdrawImpactResult = {
+          baseline,
+          finalOnlyWithdraw,
+          finalWithPairSameAmount: withPair0,
+          deficitVsBaseline,
+          impactPermanentWithdraw,
+          extraBreakEven,
+          finalWithBreakEven: finalPair(extraBreakEven),
+        };
+      },
+      openLedgerDiffDetail(row) {
+        if (!this.cofrinhoTaxes || row == null || row.diff === null || row.diff === undefined) return;
+        const br = computeCofrinhoLedgerDiffBreakdown(
+          row.dateIso,
+          this.initialBalance,
+          this.flows,
+          this.periodStart,
+          this.horizonDate,
+          this.holidayMapForPeriod,
+          this.cdiResolveAnnualRate
+        );
+        this.ledgerDiffDetail = br;
+        this.$nextTick(() => this.showLedgerDiffDetailModal());
+      },
+      ledgerDiffLayerLabel(line) {
+        if (!line) return '—';
+        if (line.source === 'initial') {
+          return `Saldo inicial (${this.formatDate(line.open)})`;
+        }
+        const f = this.flows.find((x) => x.id === line.flowId);
+        if (!f) return `Entrada (${this.formatDate(line.open)})`;
+        const lbl = f.label ? ` — ${f.label}` : '';
+        return `Entrada ${this.formatDate(f.date)}${lbl} · ${this.formatSignedMoney(f.amount)}`;
       },
       /** Copia a tabela do modal “Rendimento do aporte” como TSV (colunas = tab, linhas = LF). */
       copyAporteYieldModalTable() {

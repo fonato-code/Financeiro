@@ -152,6 +152,15 @@
       max-height: 14rem;
       overflow-y: auto;
     }
+    td.ledger-diff-click {
+      cursor: pointer;
+    }
+    td.ledger-diff-withdraw-alloc td {
+      background: rgba(231, 76, 60, 0.1) !important;
+      border-top: none !important;
+      font-size: 0.8125rem;
+      vertical-align: middle;
+    }
     .modal-holidays .tax-iof-pct-cell,
     .modal-holidays .tax-ir-pct-cell {
       color: #f5c88a;
@@ -264,6 +273,14 @@
         Período simulado: {{ formatDate(periodStart) }} → {{ formatDate(horizonDate) }}
         <span v-if="sortedFlows.length && periodStart !== simulationStart" class="ms-1">(início antecipado pela data da primeira movimentação)</span>
       </p>
+      <div v-if="cofrinhoTaxes" class="text-center mb-3">
+        <button type="button" class="btn btn-sm btn-outline-info" @click="openWithdrawImpactModal">
+          <i class="fas fa-balance-scale me-1"></i>Simular retirada + reposição
+        </button>
+        <div class="small text-muted mt-2 mx-auto" style="max-width: 42rem">
+          Compare o saldo final no horizonte ao retirar um valor e repor o mesmo depois. Veja o <strong>déficit</strong> em relação ao cenário atual e o <strong>valor adicional</strong> sugerido na reposição para equalizar o patrimônio projetado.
+        </div>
+      </div>
       </div>
 
       <div class="row g-3 mb-4">
@@ -462,6 +479,7 @@
               Na coluna <strong>Movimentação</strong>, <span class="badge rounded-pill ledger-badge-move-in">Entrada</span> (verde) e <span class="badge rounded-pill ledger-badge-move-out">Saída</span> (vermelho) indicam aportes e resgates do dia.
               Linhas com selo <span class="badge rounded-pill ledger-badge-proj">Projeção</span> são datas futuras: <span class="ledger-val-projected px-1 rounded">Valor</span> e <span class="ledger-diff-projected px-1 rounded">Diff</span> em destaque (estimativa).
               Rendimento líquido do dia em <span class="ledger-diff-realized px-1 rounded">fundo lilás</span> quando já “realizado”.
+              <strong>Diff</strong> com valor: clique na célula para ver o detalhe por camada (saldo inicial e aportes), bruto, IOF, IR e o total que compõe o rendimento do dia; em seguida as movimentações do mesmo dia (após o crédito).
               O rendimento é <strong>creditado no início</strong> do dia sobre o saldo fechado do dia anterior; movimentações do dia entram depois. Na <strong>linha do sábado</strong> aparece o crédito da sexta (badge <strong>Não</strong>). <strong>Domingo</strong> não recebe postagem; o fechamento da <strong>segunda</strong> tende a cair na <strong>terça</strong> (ou no próximo dia útil/feriado em que há postagem).
               <strong>Feriados</strong> em dia da semana (ex. Tiradentes) podem exibir <strong>Diff</strong> quando o dia anterior foi dia útil sem feriado. A coluna <strong>Dia de rendimento?</strong>: <strong>Sim</strong> = segunda a sexta sem feriado nacional; <strong>Feriado</strong> quando houver; <strong>Não</strong> = fim de semana.
               <strong>Feriados nacionais</strong> em dia útil não geram rendimento; o nome aparece em <span class="badge rounded-pill ledger-badge-holiday">laranja</span>.
@@ -596,8 +614,14 @@
                         class="text-end font-monospace"
                         :class="{
                           'ledger-diff-projected': row.projected && row.diff !== null,
-                          'ledger-diff-realized': !row.projected && row.diff !== null
+                          'ledger-diff-realized': !row.projected && row.diff !== null,
+                          'ledger-diff-click': row.diff !== null
                         }"
+                        role="button"
+                        tabindex="0"
+                        :title="row.diff !== null ? 'Clique para ver a composição do rendimento deste dia' : ''"
+                        @click="openLedgerDiffDetail(row)"
+                        @keydown.enter.prevent="openLedgerDiffDetail(row)"
                       >
                         <template v-if="row.diff !== null">{{ formatMoney(row.diff) }}</template>
                         <template v-else>—</template>
@@ -728,6 +752,223 @@
         <template v-else>Impostos conforme regras usuais de CDB sobre rendimento; não inclui custódia nem inflação. Feriados: calendário nacional federal (fixos + Carnaval, Sexta-feira Santa, Corpus Christi).</template>
         Desligue “Cofrinho” para simular juros sem impostos (modelo genérico).
       </p>
+
+      <div
+        class="modal fade modal-holidays"
+        id="ledgerDiffDetailModal"
+        tabindex="-1"
+        aria-labelledby="ledgerDiffDetailModalLabel"
+        aria-hidden="true"
+      >
+        <div class="modal-dialog modal-dialog-scrollable modal-xl">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 id="ledgerDiffDetailModalLabel" class="modal-title">
+                <i class="fas fa-calculator me-2 text-info"></i>Detalhe do rendimento (Diff)
+                <template v-if="ledgerDiffDetail && ledgerDiffDetail.ok">
+                  — {{ formatDate(ledgerDiffDetail.dateIso) }}
+                </template>
+              </h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+            </div>
+            <div class="modal-body">
+              <template v-if="ledgerDiffDetail && ledgerDiffDetail.ok">
+                <p class="small text-muted mb-2">
+                  O <strong>Diff</strong> do extrato é o rendimento líquido creditado <strong>no início</strong> deste dia (sobre o saldo fechado do dia anterior). Retiradas e entradas listadas abaixo ocorrem <strong>depois</strong> desse crédito e não entram no valor do Diff.
+                  Retiradas anteriores já reduziram o “saldo antes” de cada camada (FIFO). Abaixo de cada entrada/saldo inicial, linhas em vermelho-claro mostram <strong>quanto cada saída abateu</strong> daquela camada (ordem cronológica das retiradas).
+                </p>
+                <template v-if="ledgerDiffDetail.postedYield">
+                  <p class="small mb-2">
+                    <strong>CDI (% a.a. do dia):</strong> {{ formatCdiAnnualPercent(ledgerDiffDetail.rCur) }}%
+                    · <strong>% linear ÷ 252:</strong> {{ formatCdiDailyLinearPercent(ledgerDiffDetail.rCur) }}
+                    · <strong>Fator (1+CDI)<sup>1/252</sup>−1:</strong>
+                    <span class="font-monospace">{{ ledgerDiffDetail.fator != null ? Number(ledgerDiffDetail.fator).toLocaleString('pt-BR', { minimumFractionDigits: 8, maximumFractionDigits: 12 }) : '—' }}</span>
+                  </p>
+                  <div class="table-responsive mb-3">
+                    <table class="table table-sm table-bordered align-middle mb-0">
+                      <thead>
+                        <tr>
+                          <th>Origem</th>
+                          <th class="text-end">Saldo antes</th>
+                          <th class="text-end">Bruto</th>
+                          <th class="text-end">% IOF (tabela)</th>
+                          <th class="text-end">IOF</th>
+                          <th class="text-end">% IR</th>
+                          <th class="text-end">IR</th>
+                          <th class="text-end">Líquido camada</th>
+                          <th class="text-end text-muted small">Dias corridos</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <template v-for="(ln, idx) in ledgerDiffDetail.layerBreakdown" :key="'lb-' + idx">
+                          <tr>
+                            <td class="small">{{ ledgerDiffLayerLabel(ln) }}</td>
+                            <td class="text-end font-monospace">{{ formatMoney(ln.principalBefore) }}</td>
+                            <td class="text-end font-monospace">{{ formatMoney(ln.gross) }}</td>
+                            <td class="text-end font-monospace tax-iof-pct-cell">{{ formatTaxDayPercent(ln.iofPct) }}</td>
+                            <td class="text-end font-monospace tax-iof-amt-cell">{{ formatMoney(ln.iof) }}</td>
+                            <td class="text-end font-monospace tax-ir-pct-cell">{{ formatTaxDayPercent(ln.irPct) }}</td>
+                            <td class="text-end font-monospace tax-ir-amt-cell">{{ formatMoney(ln.ir) }}</td>
+                            <td class="text-end font-monospace">{{ formatMoney(ln.net) }}</td>
+                            <td class="text-end text-muted small">{{ ln.daysSinceOpen }}</td>
+                          </tr>
+                          <tr
+                            v-for="(w, wi) in (ln.withdrawalsFromLayer || [])"
+                            :key="'lb-' + idx + '-w-' + wi"
+                            class="ledger-diff-withdraw-alloc"
+                          >
+                            <td colspan="9" class="ps-4 py-1">
+                              <span class="badge rounded-pill ledger-badge-move-out me-2">Abatimento FIFO</span>
+                              <span class="text-muted">Saída em {{ formatDate(w.withdrawDate) }}</span>
+                              <span v-if="w.withdrawLabel" class="text-muted"> — {{ w.withdrawLabel }}</span>
+                              <span class="text-muted"> · Valor da saída:</span>
+                              <strong class="font-monospace ms-1">{{ formatSignedMoney(w.withdrawAmount) }}</strong>
+                              <span class="text-muted ms-2">· Abatido desta origem:</span>
+                              <strong class="font-monospace text-danger ms-1">−{{ formatMoney(w.takenFromLayer) }}</strong>
+                            </td>
+                          </tr>
+                        </template>
+                      </tbody>
+                      <tfoot v-if="ledgerDiffDetail.totals">
+                        <tr class="fw-semibold">
+                          <td>Total</td>
+                          <td></td>
+                          <td class="text-end font-monospace">{{ formatMoney(ledgerDiffDetail.totals.gross) }}</td>
+                          <td></td>
+                          <td class="text-end font-monospace tax-iof-amt-cell">{{ formatMoney(ledgerDiffDetail.totals.iof) }}</td>
+                          <td></td>
+                          <td class="text-end font-monospace tax-ir-amt-cell">{{ formatMoney(ledgerDiffDetail.totals.ir) }}</td>
+                          <td class="text-end font-monospace">{{ formatMoney(ledgerDiffDetail.totals.net) }}</td>
+                          <td></td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                  <p class="small mb-3">
+                    <strong>Diff (extrato):</strong> {{ formatMoney(ledgerDiffDetail.diff) }}
+                    <span v-if="ledgerDiffDetail.totals && Math.abs(Number(ledgerDiffDetail.diff) - ledgerDiffDetail.totals.net) > 0.0001" class="text-warning">
+                      (diferença numérica vs. soma das camadas: {{ formatMoney(Number(ledgerDiffDetail.diff) - ledgerDiffDetail.totals.net) }})
+                    </span>
+                  </p>
+                </template>
+                <template v-else>
+                  <p class="text-muted mb-0">Neste dia não houve postagem de rendimento (Diff vazio no extrato).</p>
+                </template>
+                <h6 class="border-bottom border-secondary pb-2 mb-2">Movimentações neste dia (após o rendimento)</h6>
+                <template v-if="ledgerDiffDetail.dayFlows && ledgerDiffDetail.dayFlows.length">
+                  <ul class="list-unstyled small mb-0">
+                    <li v-for="df in ledgerDiffDetail.dayFlows" :key="df.id" class="d-flex flex-wrap justify-content-between gap-2 py-1 border-bottom border-secondary border-opacity-25">
+                      <span>
+                        <span v-if="df.amount >= 0" class="badge rounded-pill ledger-badge-move-in me-1">Entrada</span>
+                        <span v-else class="badge rounded-pill ledger-badge-move-out me-1">Saída</span>
+                        {{ formatDate(df.date) }}
+                        <span v-if="df.label" class="text-muted"> — {{ df.label }}</span>
+                      </span>
+                      <strong class="font-monospace">{{ formatSignedMoney(df.amount) }}</strong>
+                    </li>
+                  </ul>
+                </template>
+                <p v-else class="text-muted small mb-0">Nenhuma movimentação nesta data.</p>
+              </template>
+              <template v-else-if="ledgerDiffDetail && !ledgerDiffDetail.ok">
+                <p class="text-warning mb-0">{{ ledgerDiffDetail.reason || 'Não foi possível calcular o detalhe.' }}</p>
+              </template>
+              <p v-else class="text-muted mb-0">Nenhum dado.</p>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div
+        class="modal fade modal-holidays"
+        id="withdrawImpactModal"
+        tabindex="-1"
+        aria-labelledby="withdrawImpactModalLabel"
+        aria-hidden="true"
+      >
+        <div class="modal-dialog modal-dialog-scrollable modal-lg">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 id="withdrawImpactModalLabel" class="modal-title">
+                <i class="fas fa-balance-scale me-2 text-info"></i>Simulação: retirada e reposição
+              </h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+            </div>
+            <div class="modal-body">
+              <p class="small text-muted mb-3">
+                O cenário <strong>base</strong> é a sua simulação atual (todos os fluxos até {{ formatDate(horizonDate) }}).
+                Aqui são acrescentados apenas uma <strong>retirada</strong> e uma <strong>reposição do mesmo valor</strong> nas datas abaixo; o saldo final costuma ficar <strong>abaixo</strong> do base porque o capital deixa de render no intervalo entre as duas datas.
+              </p>
+              <div class="row g-3 mb-3">
+                <div class="col-md-4">
+                  <label class="form-label">Valor da retirada (R$)</label>
+                  <input v-model.number="withdrawImpactSim.amount" type="number" step="0.01" min="0.01" class="form-control" />
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">Data da retirada</label>
+                  <input v-model="withdrawImpactSim.withdrawDate" type="date" class="form-control" />
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">Data da reposição (mesmo valor)</label>
+                  <input v-model="withdrawImpactSim.restoreDate" type="date" class="form-control" />
+                </div>
+              </div>
+              <p class="small text-muted mb-3">
+                Período válido: {{ formatDate(periodStart) }} a {{ formatDate(horizonDate) }}. A retirada é processada antes da reposição no mesmo dia (ordem FIFO da simulação).
+              </p>
+              <div v-if="withdrawImpactError" class="alert alert-warning py-2 small mb-3">{{ withdrawImpactError }}</div>
+              <button type="button" class="btn btn-primary mb-3" @click="runWithdrawImpactSimulation">
+                <i class="fas fa-play me-1"></i>Calcular impacto
+              </button>
+              <template v-if="withdrawImpactResult">
+                <hr class="border-secondary" />
+                <h6 class="mb-3">Resultados (saldo final no horizonte)</h6>
+                <ul class="list-unstyled small mb-0">
+                  <li class="d-flex flex-wrap justify-content-between gap-2 py-2 border-bottom border-secondary border-opacity-25">
+                    <span>Cenário base (atual)</span>
+                    <strong class="font-monospace">{{ formatMoney(withdrawImpactResult.baseline) }}</strong>
+                  </li>
+                  <li class="d-flex flex-wrap justify-content-between gap-2 py-2 border-bottom border-secondary border-opacity-25">
+                    <span>Só com a retirada extra (sem repor)</span>
+                    <strong class="font-monospace text-danger">{{ formatMoney(withdrawImpactResult.finalOnlyWithdraw) }}</strong>
+                  </li>
+                  <li class="d-flex flex-wrap justify-content-between gap-2 py-2 border-bottom border-secondary border-opacity-25">
+                    <span>Retirada + repor o <strong>mesmo</strong> valor na data da reposição</span>
+                    <strong class="font-monospace">{{ formatMoney(withdrawImpactResult.finalWithPairSameAmount) }}</strong>
+                  </li>
+                  <li class="d-flex flex-wrap justify-content-between gap-2 py-2 border-bottom border-secondary border-opacity-25">
+                    <span><strong>Déficit vs. base</strong> (quanto você “perde” no final só com retirar e repor o mesmo)</span>
+                    <strong class="font-monospace" :class="withdrawImpactResult.deficitVsBaseline > 0.01 ? 'text-warning' : 'text-success'">
+                      {{ formatMoney(withdrawImpactResult.deficitVsBaseline) }}
+                    </strong>
+                  </li>
+                  <li class="d-flex flex-wrap justify-content-between gap-2 py-2 border-bottom border-secondary border-opacity-25">
+                    <span>Impacto se <strong>nunca</strong> repusesse (só a retirada)</span>
+                    <strong class="font-monospace text-danger">{{ formatMoney(withdrawImpactResult.impactPermanentWithdraw) }}</strong>
+                  </li>
+                  <li class="d-flex flex-wrap justify-content-between gap-2 py-2">
+                    <span>
+                      <strong>Repor na data da reposição</strong> o mesmo valor <strong>+ adicional</strong> para equalizar o saldo final ao base
+                    </span>
+                    <strong class="font-monospace text-info">{{ formatMoney(withdrawImpactSim.amount + withdrawImpactResult.extraBreakEven) }}</strong>
+                  </li>
+                  <li v-if="withdrawImpactResult.extraBreakEven > 0.005" class="small text-muted pt-1">
+                    (Valor original {{ formatMoney(withdrawImpactSim.amount) }} + adicional estimado
+                    <strong>{{ formatMoney(withdrawImpactResult.extraBreakEven) }}</strong> · saldo final verificado:
+                    {{ formatMoney(withdrawImpactResult.finalWithBreakEven) }})
+                  </li>
+                </ul>
+              </template>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <div
         class="modal fade modal-holidays"
